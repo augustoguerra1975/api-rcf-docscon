@@ -1,38 +1,53 @@
 import os
+import json
 import firebase_admin
 from firebase_admin import credentials, firestore
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# PEGA A CHAVE E LIMPA TUDO
-raw_key = os.getenv("FIREBASE_PRIVATE_KEY", "")
-clean_key = raw_key.strip().replace("\\n", "\n").replace('"', '')
+# 1. PERMISSÕES PARA O SITE ACESSAR A API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/api/cotas")
-def testar_conexao():
-    # LOG DE SEGURANÇA (Verifique isso no painel do Render!)
-    print(f"--- DEBUG CHAVE ---")
-    print(f"Tamanho da chave: {len(clean_key)} caracteres")
-    print(f"Começa com: {clean_key[:25]}")
-    print(f"Termina com: {clean_key[-25:]}")
-    
-    try:
-        if not firebase_admin._apps:
-            cred = credentials.Certificate({
-                "type": "service_account",
-                "project_id": "renan-d5f4b",
-                "private_key": clean_key,
-                "client_email": "firebase-adminsdk-fbsvc@renan-d5f4b.iam.gserviceaccount.com",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            })
+# 2. INICIALIZAÇÃO SEGURA
+try:
+    if not firebase_admin._apps:
+        firebase_json = os.getenv("FIREBASE_JSON")
+        if firebase_json:
+            cred_dict = json.loads(firebase_json)
+            if "private_key" in cred_dict:
+                cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+            
+            cred = credentials.Certificate(cred_dict)
             firebase_admin.initialize_app(cred)
-        
-        db = firestore.client()
-        # TESTE RÁPIDO: Tenta ler apenas 1 documento com timeout de 10 segundos
-        doc = db.collection("cotas_contempladas").limit(1).get(timeout=10)
-        return {"status": "Conectado!", "cartas_encontradas": len(doc)}
-    
+except Exception as e:
+    print(f"Erro Firebase: {e}")
+
+db = firestore.client()
+
+@app.get("/")
+def root():
+    return {"status": "Online", "msg": "API RCF Pronta para Uso"}
+
+# 3. ROTA QUE O SITE USA PARA MOSTRAR AS CARTAS
+@app.get("/api/cotas")
+def listar_cotas():
+    try:
+        # Busca todas as cartas da coleção
+        docs = db.collection("cotas_contempladas").get(timeout=10)
+        return [{**doc.to_dict(), "id": doc.id} for doc in docs]
     except Exception as e:
-        print(f"ERRO REAL NO FIREBASE: {str(e)}")
-        return {"erro_real": str(e)}
+        return {"erro": str(e)}
+
+@app.post("/webhook-docscon")
+async def receber_cota(request: Request):
+    dados = await request.json()
+    cota_id = str(dados.get("id", "sem_id"))
+    db.collection("cotas_contempladas").document(cota_id).set(dados)
+    return {"status": "sucesso"}
