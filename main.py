@@ -1,5 +1,4 @@
 import os
-import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 from fastapi import FastAPI, Request
@@ -7,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# 1. PERMISSÕES DE ACESSO
+# 1. PERMISSÕES DE ACESSO (CORS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,40 +14,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. INICIALIZAÇÃO DO MOTOR (ORDEM CORRETA)
+# 2. INICIALIZAÇÃO DO MOTOR
 db = None
 
-try:
-    if not firebase_admin._apps:
-        firebase_json = os.getenv("FIREBASE_JSON")
-        if firebase_json:
-            cred_dict = json.loads(firebase_json)
-            # Limpeza da chave privada
-            if "private_key" in cred_dict:
-                cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+def inicializar_firebase():
+    global db
+    try:
+        if not firebase_admin._apps:
+            # Pega a chave que você configurou no print image_b31b5b.png
+            chv = os.getenv("FIREBASE_PRIVATE_KEY", "")
             
-            cred = credentials.Certificate(cred_dict)
-            firebase_admin.initialize_app(cred)
-            # O CLIENTE SÓ É CRIADO APÓS A INICIALIZAÇÃO
-            db = firestore.client()
-            print("--- SISTEMA RCF: CONECTADO COM SUCESSO ---")
-        else:
-            print("--- ERRO: Variável FIREBASE_JSON não encontrada no Render ---")
-except Exception as e:
-    print(f"--- ERRO CRÍTICO: {str(e)} ---")
+            # Limpeza cirúrgica da chave (remove sujeira de tradução e quebras de linha)
+            chv_limpa = chv.strip().replace("\\n", "\n").replace('"', '')
+            
+            if not chv_limpa:
+                print("--- ERRO: Chave FIREBASE_PRIVATE_KEY não encontrada! ---")
+                return
 
-# 3. ROTAS DA API
+            cred = credentials.Certificate({
+                "type": "service_account",
+                "project_id": "renan-d5f4b",
+                "private_key": chv_limpa,
+                "client_email": "firebase-adminsdk-fbsvc@renan-d5f4b.iam.gserviceaccount.com",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            })
+            
+            # Inicializa e já cria o cliente do banco
+            firebase_app = firebase_admin.initialize_app(cred)
+            db = firestore.client(app=firebase_app)
+            print("--- MOTOR RCF: LIGADO COM SUCESSO ---")
+    except Exception as e:
+        print(f"--- FALHA NA PARTIDA: {str(e)} ---")
+
+# Tenta ligar o motor assim que o código carrega
+inicializar_firebase()
+
+# 3. ROTAS
 @app.get("/")
 def root():
-    return {"status": "Online", "msg": "API RCF Investimentos - Versão Final"}
+    status = "Online" if db else "Offline (Erro no Firebase)"
+    return {"status": status, "msg": "API RCF Investimentos"}
 
 @app.get("/api/cotas")
 def listar_cotas():
-    if db is None:
-        return {"erro": "Banco de dados não inicializado. Verifique os logs do Render."}
+    if not db:
+        return {"erro": "Banco de dados offline. Verifique a chave no Render."}
     
     try:
-        # Busca os documentos no Firebase
+        # Busca as cartas no Firebase
         docs = db.collection("cotas_contempladas").get(timeout=10)
         return [{**doc.to_dict(), "id": doc.id} for doc in docs]
     except Exception as e:
@@ -56,7 +69,7 @@ def listar_cotas():
 
 @app.post("/webhook-docscon")
 async def receber_cota(request: Request):
-    if db is None:
+    if not db:
         return {"status": "erro", "msg": "DB offline"}
     
     try:
