@@ -1,10 +1,9 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import firebase_admin
-# MUDANÇA 1: Importando o motor Assíncrono oficial
-from firebase_admin import credentials, firestore_async
+from firebase_admin import credentials, firestore
 
-# 1. DICIONÁRIO COMPLETO DO FIREBASE
+# 1. CREDENCIAIS DO FIREBASE
 firebase_creds = {
   "type": "service_account",
   "project_id": "renan-d5f4b",
@@ -19,18 +18,15 @@ firebase_creds = {
   "universe_domain": "googleapis.com"
 }
 
+# 2. INICIALIZAÇÃO
 if "\\n" in firebase_creds["private_key"]:
     firebase_creds["private_key"] = firebase_creds["private_key"].replace("\\n", "\n")
 
 if not firebase_admin._apps:
-    try:
-        cred = credentials.Certificate(firebase_creds)
-        firebase_admin.initialize_app(cred)
-    except Exception as e:
-        print(f"Erro Crítico Firebase: {e}")
+    cred = credentials.Certificate(firebase_creds)
+    firebase_admin.initialize_app(cred)
 
-# MUDANÇA 2: Ativando o cliente Assíncrono
-db = firestore_async.client()
+db = firestore.client()
 app = FastAPI()
 
 app.add_middleware(
@@ -41,28 +37,18 @@ app.add_middleware(
 )
 
 @app.get("/")
-async def root():
-    return {"status": "Online", "empresa": "RCF Investimentos"}
+def root():
+    return {"status": "Online", "msg": "Motor RCF pronto"}
 
 @app.get("/api/cotas")
-async def listar_cotas():
-    try:
-        # MUDANÇA 3: Loop de leitura à prova de travamento
-        docs = db.collection("cotas_contempladas").stream()
-        lista = []
-        async for doc in docs:
-            lista.append({**doc.to_dict(), "id": doc.id})
-        return lista
-    except Exception as e:
-        # Se der erro agora, ele mostra na tela em vez de travar!
-        return {"erro_interno_firebase": str(e)}
+def listar_cotas():
+    # Usando .get() simples para evitar travamentos de stream
+    docs = db.collection("cotas_contempladas").get()
+    return [{**doc.to_dict(), "id": doc.id} for doc in docs]
 
 @app.post("/webhook-docscon")
 async def receber_cota(request: Request):
-    try:
-        dados = await request.json()
-        cota_id = str(dados.get("id", "sem_id"))
-        await db.collection("cotas_contempladas").document(cota_id).set(dados)
-        return {"status": "sucesso"}
-    except Exception as e:
-        return {"erro_interno": str(e)}
+    dados = await request.json()
+    cota_id = str(dados.get("id", "sem_id"))
+    db.collection("cotas_contempladas").document(cota_id).set(dados)
+    return {"status": "sucesso"}
