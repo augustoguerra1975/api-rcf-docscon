@@ -1,6 +1,6 @@
 import os
 import json
-import httpx # Importante para buscar dados da Docscon
+import httpx
 import firebase_admin
 from firebase_admin import credentials, firestore
 from fastapi import FastAPI, Request
@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+# 1. PERMISSÕES DE ACESSO (CORS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# INICIALIZAÇÃO DO FIREBASE
+# 2. INICIALIZAÇÃO DO MOTOR (FIREBASE)
 db = None
 try:
     if not firebase_admin._apps:
@@ -32,47 +33,55 @@ try:
             })
             firebase_app = firebase_admin.initialize_app(cred)
             db = firestore.client(app=firebase_app)
+            print("--- MOTOR RCF: LIGADO ---")
 except Exception as e:
-    print(f"Erro Firebase: {e}")
+    print(f"--- ERRO FIREBASE: {str(e)} ---")
 
+# 3. ROTAS DA API
 @app.get("/")
 def root():
-    return {"status": "Online", "msg": "API RCF Pronta"}
+    return {"status": "Online", "msg": "API RCF Investimentos V3"}
 
 @app.get("/api/cotas")
 def listar_cotas():
     if not db: return {"erro": "DB Offline"}
-    docs = db.collection("cotas_contempladas").get(timeout=10)
-    return [{**doc.to_dict(), "id": doc.id} for doc in docs]
+    try:
+        docs = db.collection("cotas_contempladas").get(timeout=10)
+        return [{**doc.to_dict(), "id": doc.id} for doc in docs]
+    except Exception as e:
+        return {"erro": str(e)}
 
-# ✨ NOVA FUNÇÃO: SINCRONIZAR TUDO DA DOCSCON
+# ✨ SINCRONIZAÇÃO TOTAL COM A DOCSCON
 @app.get("/api/sincronizar")
-async def sincronizar_docscon():
-    # ⚠️ SUBSTITUA PELO SEU TOKEN DA DOCSCON ABAIXO
-    TOKEN_DOCSCON = "SEU_TOKEN_AQUI" 
-    URL_DOCSCON = "https://api.docscon.com.br/v1/contempladas"
+async def sincronizar():
+    if not db: return {"erro": "DB Offline"}
+    
+    # Busca o Token e a URL da Docscon
+    token = os.getenv("DOCSCON_TOKEN")
+    url = "https://api.docscon.com.br/v1/contempladas"
+
+    if not token:
+        return {"erro": "Token da Docscon não configurado no Render"}
 
     async with httpx.AsyncClient() as client:
         try:
-            # 1. Busca os dados lá na Docscon
-            response = await client.get(URL_DOCSCON, headers={"X-Token": TOKEN_DOCSCON})
-            cartas = response.json()
-
-            # 2. Salva cada carta no seu Firebase
-            count = 0
+            # Puxa tudo da Docscon
+            res = await client.get(url, headers={"X-Token": token})
+            cartas = res.json()
+            
+            # Salva no seu Firebase
             for carta in cartas:
-                cota_id = str(carta.get("id", f"cota_{count}"))
-                db.collection("cotas_contempladas").document(cota_id).set(carta)
-                count += 1
-
-            return {"status": "Sucesso", "total_importado": count}
+                c_id = str(carta.get("id", "cota_auto"))
+                db.collection("cotas_contempladas").document(c_id).set(carta)
+            
+            return {"status": "Sucesso", "total": len(cartas)}
         except Exception as e:
-            return {"status": "Erro na sincronização", "detalhe": str(e)}
+            return {"erro_sync": str(e)}
 
 @app.post("/webhook-docscon")
-async def receber_cota(request: Request):
-    if not db: return {"status": "erro"}
+async def webhook(request: Request):
+    if not db: return {"status": "offline"}
     dados = await request.json()
-    cota_id = str(dados.get("id", "sem_id"))
-    db.collection("cotas_contempladas").document(cota_id).set(dados)
-    return {"status": "sucesso"}
+    c_id = str(dados.get("id", "sem_id"))
+    db.collection("cotas_contempladas").document(c_id).set(dados)
+    return {"status": "recebido"}
