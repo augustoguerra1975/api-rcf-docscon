@@ -14,9 +14,11 @@ firebase_creds = {
   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
   "token_uri": "https://oauth2.googleapis.com/token",
   "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40renan-d5f4b.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40renan-d5f4b.iam.gserviceaccount.com"
 }
+
+# --- LINHA DE CORREÇÃO CRÍTICA ---
+firebase_creds["private_key"] = firebase_creds["private_key"].replace('\\n', '\n')
 
 if not firebase_admin._apps:
     cred = credentials.Certificate(firebase_creds)
@@ -32,12 +34,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ROTA DE TESTE (Para você ver algo no link principal)
 @app.get("/")
 async def root():
     return {"mensagem": "API da RCF Investimentos está ONLINE!"}
 
-# ROTA DAS COTAS (O que o site procura)
 @app.get("/api/cotas")
 async def listar_cotas():
     docs = db.collection("cotas_contempladas").stream()
@@ -54,4 +54,3 @@ async def receber_cota(request: Request):
     cota_id = str(dados.get("id", "sem_id"))
     db.collection("cotas_contempladas").document(cota_id).set(dados)
     return {"status": "sucesso"}
-
