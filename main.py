@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# CONFIGURAÇÃO FIREBASE COMPLETA
+# 1. CONFIGURAÇÃO FIREBASE COMPLETA
 firebase_creds = {
   "type": "service_account",
   "project_id": "renan-d5f4b",
@@ -32,28 +32,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# PÁGINA INICIAL PARA TESTAR
+# ROTA DE TESTE (Para você ver algo no link principal)
 @app.get("/")
 async def root():
-    return {"status": "Sistema RCF Online", "rotas": ["/api/cotas", "/webhook-docscon"]}
+    return {"mensagem": "API da RCF Investimentos está ONLINE!"}
+
+# ROTA DAS COTAS (O que o site procura)
+@app.get("/api/cotas")
+async def listar_cotas():
+    docs = db.collection("cotas_contempladas").stream()
+    lista = []
+    for doc in docs:
+        item = doc.to_dict()
+        item["id"] = doc.id
+        lista.append(item)
+    return lista
 
 @app.post("/webhook-docscon")
 async def receber_cota(request: Request):
     dados = await request.json()
     cota_id = str(dados.get("id", "sem_id"))
-    info_cota = {
-        "administradora": dados.get("administradora_nome"),
-        "valor_credito": dados.get("valor_credito"),
-        "valor_entrada": dados.get("valor_entrada"),
-        "valor_parcela": dados.get("valor_parcela"),
-        "parcelas_restantes": dados.get("parcelas_restantes"),
-        "status": dados.get("status_nome"),
-        "categoria": dados.get("categoria_nome", "Imóvel")
-    }
-    db.collection("cotas_contempladas").document(cota_id).set(info_cota)
+    db.collection("cotas_contempladas").document(cota_id).set(dados)
     return {"status": "sucesso"}
 
-@app.get("/api/cotas")
-async def listar_cotas():
-    docs = db.collection("cotas_contempladas").stream()
-    return [{**doc.to_dict(), "id": doc.id} for doc in docs]
