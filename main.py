@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# 1. DICIONÁRIO COMPLETO DO FIREBASE (EM INGLÊS)
+# 1. DICIONÁRIO COMPLETO DO FIREBASE
 firebase_creds = {
   "type": "service_account",
   "project_id": "renan-d5f4b",
@@ -18,7 +18,7 @@ firebase_creds = {
   "universe_domain": "googleapis.com"
 }
 
-# 2. LIMPEZA DA CHAVE
+# 2. LIMPEZA DA CHAVE (Proteção contra o PEM error)
 if "\\n" in firebase_creds["private_key"]:
     firebase_creds["private_key"] = firebase_creds["private_key"].replace("\\n", "\n")
 
@@ -41,15 +41,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ROTA 1: Removido o 'async'
 @app.get("/")
-async def root():
+def root():
     return {"status": "Online", "empresa": "RCF Investimentos"}
 
+# ROTA 2: Removido o 'async' (O segredo para não travar o loop)
 @app.get("/api/cotas")
-async def listar_cotas():
+def listar_cotas():
     docs = db.collection("cotas_contempladas").stream()
     return [{**doc.to_dict(), "id": doc.id} for doc in docs]
 
+# ROTA 3: Mantido o 'async' apenas porque o JSON interno exige
 @app.post("/webhook-docscon")
 async def receber_cota(request: Request):
     dados = await request.json()
