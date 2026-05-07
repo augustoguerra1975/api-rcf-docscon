@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import firebase_admin
-from firebase_admin import credentials, firestore
+# MUDANÇA 1: Importando o motor Assíncrono oficial
+from firebase_admin import credentials, firestore_async
 
 # 1. DICIONÁRIO COMPLETO DO FIREBASE
 firebase_creds = {
@@ -18,11 +19,9 @@ firebase_creds = {
   "universe_domain": "googleapis.com"
 }
 
-# 2. LIMPEZA DA CHAVE (Proteção contra o PEM error)
 if "\\n" in firebase_creds["private_key"]:
     firebase_creds["private_key"] = firebase_creds["private_key"].replace("\\n", "\n")
 
-# 3. INICIALIZAÇÃO SEGURA
 if not firebase_admin._apps:
     try:
         cred = credentials.Certificate(firebase_creds)
@@ -30,10 +29,10 @@ if not firebase_admin._apps:
     except Exception as e:
         print(f"Erro Crítico Firebase: {e}")
 
-db = firestore.client()
+# MUDANÇA 2: Ativando o cliente Assíncrono
+db = firestore_async.client()
 app = FastAPI()
 
-# 4. PERMISSÕES DE ACESSO (CORS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -41,21 +40,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ROTA 1: Removido o 'async'
 @app.get("/")
-def root():
+async def root():
     return {"status": "Online", "empresa": "RCF Investimentos"}
 
-# ROTA 2: Removido o 'async' (O segredo para não travar o loop)
 @app.get("/api/cotas")
-def listar_cotas():
-    docs = db.collection("cotas_contempladas").stream()
-    return [{**doc.to_dict(), "id": doc.id} for doc in docs]
+async def listar_cotas():
+    try:
+        # MUDANÇA 3: Loop de leitura à prova de travamento
+        docs = db.collection("cotas_contempladas").stream()
+        lista = []
+        async for doc in docs:
+            lista.append({**doc.to_dict(), "id": doc.id})
+        return lista
+    except Exception as e:
+        # Se der erro agora, ele mostra na tela em vez de travar!
+        return {"erro_interno_firebase": str(e)}
 
-# ROTA 3: Mantido o 'async' apenas porque o JSON interno exige
 @app.post("/webhook-docscon")
 async def receber_cota(request: Request):
-    dados = await request.json()
-    cota_id = str(dados.get("id", "sem_id"))
-    db.collection("cotas_contempladas").document(cota_id).set(dados)
-    return {"status": "sucesso"}
+    try:
+        dados = await request.json()
+        cota_id = str(dados.get("id", "sem_id"))
+        await db.collection("cotas_contempladas").document(cota_id).set(dados)
+        return {"status": "sucesso"}
+    except Exception as e:
+        return {"erro_interno": str(e)}
