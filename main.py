@@ -2,8 +2,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import firebase_admin
 from firebase_admin import credentials, firestore
+import os
 
-# 1. CONFIGURAÇÃO FIREBASE COMPLETA
+# 1. DICIONÁRIO COMPLETO DO FIREBASE (NÃO ALTERAR NADA AQUI)
 firebase_creds = {
   "type": "service_account",
   "project_id": "renan-d5f4b",
@@ -14,19 +15,26 @@ firebase_creds = {
   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
   "token_uri": "https://oauth2.googleapis.com/token",
   "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40renan-d5f4b.iam.gserviceaccount.com"
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40renan-d5f4b.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
 }
 
-# --- LINHA DE CORREÇÃO CRÍTICA ---
-firebase_creds["private_key"] = firebase_creds["private_key"].replace('\\n', '\n')
+# 2. LIMPEZA DA CHAVE (Obrigatório para o Render não se perder)
+if "\\n" in firebase_creds["private_key"]:
+    firebase_creds["private_key"] = firebase_creds["private_key"].replace("\\n", "\n")
 
+# 3. INICIALIZAÇÃO SEGURA
 if not firebase_admin._apps:
-    cred = credentials.Certificate(firebase_creds)
-    firebase_admin.initialize_app(cred)
-db = firestore.client()
+    try:
+        cred = credentials.Certificate(firebase_creds)
+        firebase_admin.initialize_app(cred)
+    except Exception as e:
+        print(f"Erro Crítico Firebase: {e}")
 
+db = firestore.client()
 app = FastAPI()
 
+# 4. PERMISSÕES DE ACESSO (CORS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -36,17 +44,12 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    return {"mensagem": "API da RCF Investimentos está ONLINE!"}
+    return {"status": "Online", "empresa": "RCF Investimentos"}
 
 @app.get("/api/cotas")
 async def listar_cotas():
     docs = db.collection("cotas_contempladas").stream()
-    lista = []
-    for doc in docs:
-        item = doc.to_dict()
-        item["id"] = doc.id
-        lista.append(item)
-    return lista
+    return [{**doc.to_dict(), "id": doc.id} for doc in docs]
 
 @app.post("/webhook-docscon")
 async def receber_cota(request: Request):
