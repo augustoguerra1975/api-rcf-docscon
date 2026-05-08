@@ -14,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. INICIALIZAÇÃO FIREBASE
+# Inicialização do Firebase
 db = None
 try:
     if not firebase_admin._apps:
@@ -30,14 +30,13 @@ try:
             })
             firebase_app = firebase_admin.initialize_app(cred)
             db = firestore.client(app=firebase_app)
-            print("--- MOTOR RCF: ONLINE ---")
+            print("--- SISTEMA RCF: CONECTADO ---")
 except Exception as e:
-    print(f"--- ERRO FIREBASE: {str(e)} ---")
+    print(f"--- ERRO: {str(e)} ---")
 
-# 2. ROTAS
 @app.get("/")
 def root():
-    return {"status": "Online", "msg": "API RCF - Sincronização DW"}
+    return {"status": "Online", "servico": "RCF - Integração DW"}
 
 @app.get("/api/cotas")
 def listar_cotas():
@@ -45,7 +44,7 @@ def listar_cotas():
     docs = db.collection("cotas_contempladas").get(timeout=10)
     return [{**doc.to_dict(), "id": doc.id} for doc in docs]
 
-# ✨ SINCRONIZAÇÃO TRADUZIDA (Padrão DW para Padrão RCF)
+# ✨ SINCRONIZAÇÃO E TRADUÇÃO DE CAMPOS
 @app.get("/api/sincronizar")
 async def sincronizar():
     if not db: return {"erro": "DB Offline"}
@@ -57,25 +56,28 @@ async def sincronizar():
             res = await client.get(url, timeout=30.0)
             cartas_dw = res.json()
             
-            count = 0
+            total = 0
             for item in cartas_dw:
-                # MAPEAMENTO: Traduz o que a DW envia para o que seu SITE espera ler
-                cota_mapeada = {
+                # TRADUÇÃO: Transformamos os nomes da DW nos nomes que o seu SITE entende
+                cota_convertida = {
                     "id_dw": item.get("id"),
                     "categoria": item.get("category"),
-                    "valor_credito": item.get("value"),        # value -> valor_credito
-                    "valor_entrada": item.get("input"),        # input -> valor_entrada
-                    "valor_parcela": item.get("installment"),  # installment -> valor_parcela
-                    "parcelas_restantes": item.get("term"),    # term -> parcelas_restantes
-                    "status": item.get("status"),
+                    "valor_credito": item.get("value"),        # 'value' vira 'valor_credito'
+                    "valor_entrada": item.get("input"),        # 'input' vira 'valor_entrada'
+                    "valor_parcela": item.get("installment"),  # 'installment' vira 'valor_parcela'
+                    "parcelas_restantes": item.get("term"),    # 'term' vira 'parcelas_restantes'
+                    "taxa_transferencia": item.get("transfer"),
                     "grupo": item.get("group"),
-                    "administradora": item.get("administrator", {}).get("name", "Consórcio")
+                    "status": item.get("status"),
+                    "administradora": item.get("administrator", {}).get("name", "Consórcio"),
+                    "ultima_sincronizacao": firestore.SERVER_TIMESTAMP
                 }
                 
+                # Salva no Firebase usando o ID da DW para evitar duplicados
                 doc_id = str(item.get("id"))
-                db.collection("cotas_contempladas").document(doc_id).set(cota_mapeada)
-                count += 1
+                db.collection("cotas_contempladas").document(doc_id).set(cota_convertida)
+                total += 1
             
-            return {"status": "Sucesso", "total_importado": count}
+            return {"status": "Sucesso", "total_importado": total}
         except Exception as e:
-            return {"erro": str(e)}
+            return {"status": "erro", "detalhe": str(e)}
