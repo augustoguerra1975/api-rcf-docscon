@@ -2,7 +2,7 @@ import os
 import httpx
 import firebase_admin
 from firebase_admin import credentials, firestore
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -14,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# INICIALIZAÇÃO FIREBASE
+# FIREBASE (Usando sua chave que já funciona no Render)
 db = None
 try:
     if not firebase_admin._apps:
@@ -39,28 +39,30 @@ def listar_cotas():
     docs = db.collection("cotas_contempladas").get(timeout=10)
     return [{**doc.to_dict(), "id": doc.id} for doc in docs]
 
-# SINCRONIZAÇÃO COM LOG DE QUANTIDADE
+# ✨ SINCRONIZAÇÃO PÚBLICA (Sem Token)
 @app.get("/api/sincronizar")
 async def sincronizar():
     if not db: return {"erro": "DB Offline"}
     
-    # IMPORTANTE: Se não colocar o Token, a DW só manda 1 carta de exemplo
-    token = os.getenv("DOCSCON_TOKEN")
+    # URL oficial da sua documentação
     url = "https://app.dwconsorcios.com.br/api/v1/contemplados"
 
     async with httpx.AsyncClient() as client:
         try:
-            # Se houver token, ele envia. Se não, vai "aberto" e recebe só o exemplo.
-            headers = {"X-Token": token} if token else {}
-            res = await client.get(url, headers=headers, timeout=30.0)
+            res = await client.get(url, timeout=30.0)
             cartas = res.json()
             
-            print(f"--- DEBUG: Recebidas {len(cartas)} cartas da DW ---")
-
+            # Limpa as cotas antigas (opcional) e salva as novas
             for carta in cartas:
-                c_id = str(carta.get("id", f"cota_{carta.get('numero_proposta', 'ex')}"))
+                # Usa o 'id' numérico da API como identificador no Firebase
+                c_id = str(carta.get("id"))
                 db.collection("cotas_contempladas").document(c_id).set(carta)
             
-            return {"status": "Sucesso", "total_recebido": len(cartas), "aviso": "Se veio apenas 1, voce precisa configurar o DOCSCON_TOKEN no Render."}
+            # Retorna o que ele recebeu para você conferir no navegador
+            return {
+                "status": "Sucesso", 
+                "total_importado": len(cartas), 
+                "exemplo_recebido": cartas[0] if cartas else "Lista vazia"
+            }
         except Exception as e:
             return {"erro": str(e)}
