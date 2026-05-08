@@ -14,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Inicialização do Firebase (Sua chave já está configurada no Render)
+# 1. INICIALIZAÇÃO FIREBASE
 db = None
 try:
     if not firebase_admin._apps:
@@ -30,24 +30,22 @@ try:
             })
             firebase_app = firebase_admin.initialize_app(cred)
             db = firestore.client(app=firebase_app)
-            print("--- MOTOR FIREBASE PRONTO ---")
+            print("--- MOTOR RCF: ONLINE ---")
 except Exception as e:
     print(f"--- ERRO FIREBASE: {str(e)} ---")
 
+# 2. ROTAS
 @app.get("/")
 def root():
-    return {"status": "Online", "msg": "API RCF - Tradutor DW v1.1"}
+    return {"status": "Online", "msg": "API RCF - Sincronização DW"}
 
 @app.get("/api/cotas")
 def listar_cotas():
     if not db: return {"erro": "DB Offline"}
-    try:
-        docs = db.collection("cotas_contempladas").get(timeout=10)
-        return [{**doc.to_dict(), "id": doc.id} for doc in docs]
-    except Exception as e:
-        return {"erro": str(e)}
+    docs = db.collection("cotas_contempladas").get(timeout=10)
+    return [{**doc.to_dict(), "id": doc.id} for doc in docs]
 
-# ✨ SINCRONIZAÇÃO COM TRADUTOR DE CAMPOS
+# ✨ SINCRONIZAÇÃO TRADUZIDA (Padrão DW para Padrão RCF)
 @app.get("/api/sincronizar")
 async def sincronizar():
     if not db: return {"erro": "DB Offline"}
@@ -59,33 +57,25 @@ async def sincronizar():
             res = await client.get(url, timeout=30.0)
             cartas_dw = res.json()
             
-            if not isinstance(cartas_dw, list):
-                return {"status": "erro", "msg": "API não enviou uma lista", "resposta": str(cartas_dw)[:100]}
-
-            total = 0
+            count = 0
             for item in cartas_dw:
-                # MAPEAMENTO: Transformamos o padrão DW no padrão que seu SITE espera
-                cota_traduzida = {
-                    "id_origem": item.get("id"),
-                    "administradora": item.get("administrator", {}).get("name", "N/A"),
-                    "valor_credito": item.get("value"),
-                    "valor_entrada": item.get("input"),
-                    "valor_parcela": item.get("installment"),
-                    "parcelas_restantes": item.get("term"),
-                    "status": item.get("status"),
+                # MAPEAMENTO: Traduz o que a DW envia para o que seu SITE espera ler
+                cota_mapeada = {
+                    "id_dw": item.get("id"),
                     "categoria": item.get("category"),
-                    "grupo": item.get("group")
+                    "valor_credito": item.get("value"),        # value -> valor_credito
+                    "valor_entrada": item.get("input"),        # input -> valor_entrada
+                    "valor_parcela": item.get("installment"),  # installment -> valor_parcela
+                    "parcelas_restantes": item.get("term"),    # term -> parcelas_restantes
+                    "status": item.get("status"),
+                    "grupo": item.get("group"),
+                    "administradora": item.get("administrator", {}).get("name", "Consórcio")
                 }
                 
-                # Salvamos no Firebase com o ID da DW para não duplicar
-                doc_id = f"dw_{item.get('id')}"
-                db.collection("cotas_contempladas").document(doc_id).set(cota_traduzida)
-                total += 1
+                doc_id = str(item.get("id"))
+                db.collection("cotas_contempladas").document(doc_id).set(cota_mapeada)
+                count += 1
             
-            return {
-                "status": "Sucesso",
-                "total_importado": total,
-                "detalhe": f"Foram encontradas {total} cartas na API pública."
-            }
+            return {"status": "Sucesso", "total_importado": count}
         except Exception as e:
-            return {"status": "erro", "msg": str(e)}
+            return {"erro": str(e)}
