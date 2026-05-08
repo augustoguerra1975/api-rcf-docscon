@@ -1,5 +1,4 @@
 import os
-import json
 import httpx
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -8,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# 1. PERMISSÕES DE ACESSO (CORS)
+# 1. PERMISSÕES DE ACESSO
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,7 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. INICIALIZAÇÃO DO MOTOR (FIREBASE)
+# 2. INICIALIZAÇÃO DO FIREBASE (Sua chave já está ok no Render)
 db = None
 try:
     if not firebase_admin._apps:
@@ -33,48 +32,48 @@ try:
             })
             firebase_app = firebase_admin.initialize_app(cred)
             db = firestore.client(app=firebase_app)
-            print("--- MOTOR RCF: LIGADO ---")
+            print("--- MOTOR FIREBASE PRONTO ---")
 except Exception as e:
     print(f"--- ERRO FIREBASE: {str(e)} ---")
 
-# 3. ROTAS DA API
+# 3. ROTAS
 @app.get("/")
 def root():
-    return {"status": "Online", "msg": "API RCF Investimentos V3"}
+    return {"status": "Online", "msg": "API RCF - Integração Aberta"}
 
 @app.get("/api/cotas")
 def listar_cotas():
-    if not db: return {"erro": "DB Offline"}
+    if not db: return {"erro": "Banco offline"}
     try:
         docs = db.collection("cotas_contempladas").get(timeout=10)
         return [{**doc.to_dict(), "id": doc.id} for doc in docs]
     except Exception as e:
         return {"erro": str(e)}
 
-# ✨ SINCRONIZAÇÃO TOTAL COM A DOCSCON
+# ✨ SINCRONIZAÇÃO ABERTA (Sem Token)
 @app.get("/api/sincronizar")
 async def sincronizar():
     if not db: return {"erro": "DB Offline"}
     
-    # Busca o Token e a URL da Docscon
-    token = os.getenv("DOCSCON_TOKEN")
-    url = "https://api.docscon.com.br/v1/contempladas"
-
-    if not token:
-        return {"erro": "Token da Docscon não configurado no Render"}
+    # URL pública que você forneceu
+    url = "https://app.dwconsorcios.com.br/api/v1/contemplados"
 
     async with httpx.AsyncClient() as client:
         try:
-            # Puxa tudo da Docscon
-            res = await client.get(url, headers={"X-Token": token})
+            # Chamada direta, sem cabeçalhos de autenticação
+            res = await client.get(url, timeout=30.0)
+            
+            if res.status_code != 200:
+                return {"erro": f"Erro na API DW: {res.status_code}"}
+                
             cartas = res.json()
             
-            # Salva no seu Firebase
+            # Gravação em lote no seu Firebase
             for carta in cartas:
-                c_id = str(carta.get("id", "cota_auto"))
+                c_id = str(carta.get("id", "cota_id"))
                 db.collection("cotas_contempladas").document(c_id).set(carta)
             
-            return {"status": "Sucesso", "total": len(cartas)}
+            return {"status": "Sucesso", "total_importado": len(cartas)}
         except Exception as e:
             return {"erro_sync": str(e)}
 
