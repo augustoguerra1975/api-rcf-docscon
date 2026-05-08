@@ -7,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# 1. PERMISSÕES DE ACESSO
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,13 +14,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. INICIALIZAÇÃO DO FIREBASE (Sua chave já está ok no Render)
+# INICIALIZAÇÃO FIREBASE
 db = None
 try:
     if not firebase_admin._apps:
         chv = os.getenv("FIREBASE_PRIVATE_KEY", "")
         chv_limpa = chv.strip().replace("\\n", "\n").replace('"', '')
-        
         if chv_limpa:
             cred = credentials.Certificate({
                 "type": "service_account",
@@ -32,55 +30,37 @@ try:
             })
             firebase_app = firebase_admin.initialize_app(cred)
             db = firestore.client(app=firebase_app)
-            print("--- MOTOR FIREBASE PRONTO ---")
 except Exception as e:
-    print(f"--- ERRO FIREBASE: {str(e)} ---")
-
-# 3. ROTAS
-@app.get("/")
-def root():
-    return {"status": "Online", "msg": "API RCF - Integração Aberta"}
+    print(f"Erro Firebase: {e}")
 
 @app.get("/api/cotas")
 def listar_cotas():
-    if not db: return {"erro": "Banco offline"}
-    try:
-        docs = db.collection("cotas_contempladas").get(timeout=10)
-        return [{**doc.to_dict(), "id": doc.id} for doc in docs]
-    except Exception as e:
-        return {"erro": str(e)}
+    if not db: return {"erro": "DB Offline"}
+    docs = db.collection("cotas_contempladas").get(timeout=10)
+    return [{**doc.to_dict(), "id": doc.id} for doc in docs]
 
-# ✨ SINCRONIZAÇÃO ABERTA (Sem Token)
+# SINCRONIZAÇÃO COM LOG DE QUANTIDADE
 @app.get("/api/sincronizar")
 async def sincronizar():
     if not db: return {"erro": "DB Offline"}
     
-    # URL pública que você forneceu
+    # IMPORTANTE: Se não colocar o Token, a DW só manda 1 carta de exemplo
+    token = os.getenv("DOCSCON_TOKEN")
     url = "https://app.dwconsorcios.com.br/api/v1/contemplados"
 
     async with httpx.AsyncClient() as client:
         try:
-            # Chamada direta, sem cabeçalhos de autenticação
-            res = await client.get(url, timeout=30.0)
-            
-            if res.status_code != 200:
-                return {"erro": f"Erro na API DW: {res.status_code}"}
-                
+            # Se houver token, ele envia. Se não, vai "aberto" e recebe só o exemplo.
+            headers = {"X-Token": token} if token else {}
+            res = await client.get(url, headers=headers, timeout=30.0)
             cartas = res.json()
             
-            # Gravação em lote no seu Firebase
+            print(f"--- DEBUG: Recebidas {len(cartas)} cartas da DW ---")
+
             for carta in cartas:
-                c_id = str(carta.get("id", "cota_id"))
+                c_id = str(carta.get("id", f"cota_{carta.get('numero_proposta', 'ex')}"))
                 db.collection("cotas_contempladas").document(c_id).set(carta)
             
-            return {"status": "Sucesso", "total_importado": len(cartas)}
+            return {"status": "Sucesso", "total_recebido": len(cartas), "aviso": "Se veio apenas 1, voce precisa configurar o DOCSCON_TOKEN no Render."}
         except Exception as e:
-            return {"erro_sync": str(e)}
-
-@app.post("/webhook-docscon")
-async def webhook(request: Request):
-    if not db: return {"status": "offline"}
-    dados = await request.json()
-    c_id = str(dados.get("id", "sem_id"))
-    db.collection("cotas_contempladas").document(c_id).set(dados)
-    return {"status": "recebido"}
+            return {"erro": str(e)}
